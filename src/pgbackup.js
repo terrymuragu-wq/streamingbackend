@@ -31,7 +31,7 @@ const TABLES = [
   'settings', 'users', 'agencies', 'verifications', 'model_profiles',
   'lives', 'live_access', 'subscriptions', 'content', 'content_unlocks',
   'tips', 'ratings', 'transactions', 'withdrawals', 'directives',
-  'notifications', 'chat', 'audit_log',
+  'notifications', 'chat', 'support_tickets', 'audit_log',
 ];
 
 let pg = null;

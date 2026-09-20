@@ -15,15 +15,17 @@ const blocked = (req, res) => {
 router.get('/discover', (req, res) => {
   const live = q.all(`
     SELECT u.id, p.display_name, p.bio, p.category, p.avg_rating, p.rating_count, p.sub_price_cents,
-           u.avatar, l.id AS live_id, l.title AS live_title, l.price_cents, l.started_at
+           u.avatar, l.id AS live_id, l.title AS live_title, l.price_cents, l.started_at,
+           EXISTS(SELECT 1 FROM live_access la WHERE la.live_id=l.id AND la.user_id=?) AS has_access
     FROM lives l JOIN users u ON u.id=l.model_id JOIN model_profiles p ON p.user_id=u.id
     WHERE l.status='live' AND u.status='active' AND u.eligible=1
-    ORDER BY l.started_at DESC`);
+    ORDER BY l.started_at DESC`, req.user.id);
   const upcoming = q.all(`
-    SELECT l.id AS live_id, l.title, l.scheduled_at, l.price_cents, u.id, p.display_name, p.category, p.avg_rating, u.avatar
+    SELECT l.id AS live_id, l.title, l.scheduled_at, l.price_cents, u.id, p.display_name, p.category, p.avg_rating, u.avatar,
+           EXISTS(SELECT 1 FROM live_access la WHERE la.live_id=l.id AND la.user_id=?) AS has_access
     FROM lives l JOIN users u ON u.id=l.model_id JOIN model_profiles p ON p.user_id=u.id
     WHERE l.status='scheduled' AND u.status='active' AND u.eligible=1
-    ORDER BY l.scheduled_at ASC LIMIT 20`);
+    ORDER BY l.scheduled_at ASC LIMIT 20`, req.user.id);
   const models = q.all(`
     SELECT u.id, p.display_name, p.bio, p.category, p.avg_rating, p.rating_count, p.sub_price_cents, p.is_live, u.avatar
     FROM users u JOIN model_profiles p ON p.user_id=u.id

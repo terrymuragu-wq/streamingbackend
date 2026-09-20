@@ -41,10 +41,14 @@ router.get('/dashboard', (req, res) => {
   const notifications = q.all('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 30', req.user.id);
   const subs = q.get("SELECT COUNT(*) c FROM subscriptions WHERE model_id=? AND status='active'", req.user.id).c;
   const tips = q.get('SELECT COALESCE(SUM(amount_cents),0) s FROM tips WHERE to_model=?', req.user.id).s;
+  // 30-day withdrawal rule: withdrawals unlock 30 days after the account was created
+  const joinedMs = Date.parse(String(q.get('SELECT created_at c FROM users WHERE id=?', req.user.id).c).replace(' ', 'T') + 'Z');
+  const withdrawDaysLeft = Math.max(0, 30 - Math.floor((Date.now() - joinedMs) / 86400000));
   res.json({
     profile: p, lives, content, withdrawals, directives, notifications,
     stats: { wallet_cents: req.user.wallet_cents, subscribers: subs, tips_cents: tips, status: req.user.status,
-             verified: req.user.verified, agency_approved: req.user.agency_approved, eligible: req.user.eligible }
+             verified: req.user.verified, agency_approved: req.user.agency_approved, eligible: req.user.eligible,
+             withdraw_days_left: withdrawDaysLeft }
   });
 });
 
@@ -66,6 +70,8 @@ router.post('/lives/schedule', (req, res) => {
   if (!title || !scheduled_at) return res.status(400).json({ error: 'title and scheduled_at are required' });
   if (new Date(scheduled_at).getTime() < Date.now() + 60000) return res.status(400).json({ error: 'Schedule time must be in the future' });
   const price = Math.max(0, Math.round(Number(price_cents) || 0));
+  const minLive = parseInt(getSetting('min_live_price_cents', '15000'), 10);
+  if (price > 0 && price < minLive) return res.status(400).json({ error: `Minimum stream ticket is $${(minLive / 100).toFixed(2)} — set at least that, or 0 for subscribers-only.` });
   const id = q.run("INSERT INTO lives(model_id,title,price_cents,scheduled_at,status) VALUES(?,?,?,?,'scheduled')",
     req.user.id, String(title).slice(0, 120), price, scheduled_at).lastInsertRowid;
   const subs = q.all("SELECT client_id FROM subscriptions WHERE model_id=? AND status='active'", req.user.id);
@@ -87,6 +93,8 @@ router.post('/lives/go-live', (req, res) => {
   } else {
     const title = String(req.body.title || `${req.user.name} is live`).slice(0, 120);
     const price = Math.max(0, Math.round(Number(req.body.price_cents) || 0));
+    const minLive = parseInt(getSetting('min_live_price_cents', '15000'), 10);
+    if (price > 0 && price < minLive) return res.status(400).json({ error: `Minimum stream ticket is $${(minLive / 100).toFixed(2)} — set at least that, or 0 for subscribers-only.` });
     liveId = q.run("INSERT INTO lives(model_id,title,price_cents,status,started_at) VALUES(?,?,?,'live',datetime('now'))",
       req.user.id, title, price).lastInsertRowid;
   }
@@ -97,7 +105,8 @@ router.post('/lives/go-live', (req, res) => {
   const io = req.app.get('io');
   if (io) io.emit('model_went_live', { model_id: req.user.id, name: req.user.name, live_id: liveId, title: l.title });
   audit(req.user.id, 'went_live', `live:${liveId}`);
-  res.json({ ok: true, live_id: liveId });
+  const lv = q.get('SELECT started_at, price_cents, title FROM lives WHERE id=?', liveId);
+  res.json({ ok: true, live_id: liveId, started_at: lv.started_at, price_cents: lv.price_cents, title: lv.title });
 });
 
 router.post('/lives/:id/end', (req, res) => {
@@ -131,6 +140,11 @@ router.post('/withdraw', (req, res) => {
   const min = parseInt(getSetting('min_withdraw_cents', '5000'), 10);
   if (!Number.isFinite(cents) || cents < min) return res.status(400).json({ error: `Minimum withdrawal is $${(min / 100).toFixed(2)}` });
   if (cents > req.user.wallet_cents) return res.status(400).json({ error: 'Amount exceeds your available balance' });
+  // Withdrawals unlock 30 days after the account was created; every payout is approved by the admin.
+  const acct = q.get('SELECT created_at FROM users WHERE id=?', req.user.id);
+  const joinedMs = Date.parse(String(acct.created_at).replace(' ', 'T') + 'Z');
+  const daysJoined = Math.floor((Date.now() - joinedMs) / 86400000);
+  if (daysJoined < 30) return res.status(400).json({ error: `Withdrawals unlock 30 days after joining (${30 - daysJoined} day(s) remaining). Every payout is approved by the platform admin.` });
   const pending = q.get("SELECT COALESCE(SUM(amount_cents),0) s FROM withdrawals WHERE model_id=? AND status IN ('pending_manager','pending_admin')", req.user.id).s;
   if (pending + cents > req.user.wallet_cents) return res.status(400).json({ error: 'You already have pending withdrawals covering this balance' });
   const id = q.run("INSERT INTO withdrawals(model_id,amount_cents) VALUES(?,?)", req.user.id, cents).lastInsertRowid;
