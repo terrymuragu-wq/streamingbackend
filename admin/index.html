@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AdultBlog · Admin</title>
+<style>
+:root{--bg:#0a0a12;--panel:#141428;--panel2:#1c1c38;--fg:#f2f2fa;--mut:#8a8ab2;--acc:#ff2d87;--acc2:#7c3aed;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--line:#2a2a4a}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:radial-gradient(1200px 600px at 10% -10%,#2a0a3d 0,transparent 60%),radial-gradient(900px 500px at 100% 0,#3a0a2a 0,transparent 55%),var(--bg);color:var(--fg);min-height:100vh}
+.splash{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:99;animation:fade 1.2s .8s forwards}
+.splash h1{font-size:56px;background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-background-clip:text;color:transparent;letter-spacing:2px;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.05);opacity:1}}
+@keyframes fade{to{opacity:0;visibility:hidden}}
+@keyframes slide{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
+.wrap{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:20px 12px}
+aside .brand{font-weight:800;font-size:20px;background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-background-clip:text;color:transparent;margin-bottom:20px;padding:0 8px}
+aside a{display:block;padding:10px 12px;border-radius:10px;color:var(--mut);text-decoration:none;margin:4px 0;cursor:pointer;transition:.2s}
+aside a:hover,aside a.active{background:var(--panel2);color:var(--fg);transform:translateX(3px)}
+main{padding:24px;overflow:auto;animation:slide .4s}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;gap:12px;flex-wrap:wrap}
+h2{margin:0;font-size:24px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+.card{background:linear-gradient(135deg,var(--panel),var(--panel2));border:1px solid var(--line);padding:16px;border-radius:14px;transition:.2s}
+.card:hover{transform:translateY(-3px);border-color:var(--acc)}
+.card .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:1px}
+.card .v{font-size:26px;font-weight:800;margin-top:6px}
+table{width:100%;border-collapse:collapse;background:var(--panel);border-radius:12px;overflow:hidden}
+th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid var(--line)}
+th{background:var(--panel2);color:var(--mut);text-transform:uppercase;font-size:11px;letter-spacing:1px}
+tr:hover td{background:rgba(255,45,135,.05)}
+button{background:linear-gradient(135deg,var(--acc),var(--acc2));border:0;color:#fff;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;transition:.2s}
+button:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(255,45,135,.4)}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)}
+button.bad{background:linear-gradient(135deg,#ef4444,#b91c1c)}
+button.ok{background:linear-gradient(135deg,#22c55e,#15803d)}
+button.warn{background:linear-gradient(135deg,#f59e0b,#b45309)}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);color:var(--fg);padding:10px;border-radius:8px;width:100%;font-family:inherit}
+.badge{display:inline-block;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:700}
+.b-ok{background:rgba(34,197,94,.2);color:#22c55e}
+.b-bad{background:rgba(239,68,68,.2);color:#ef4444}
+.b-warn{background:rgba(245,158,11,.2);color:#f59e0b}
+.b-mut{background:rgba(138,138,178,.2);color:#8a8ab2}
+.login{max-width:400px;margin:80px auto;padding:32px;background:var(--panel);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.5);animation:slide .5s}
+.login h1{margin:0 0 6px;background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-background-clip:text;color:transparent}
+.login p{color:var(--mut);margin:0 0 20px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hidden{display:none!important}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:50;animation:fade2 .2s}
+@keyframes fade2{from{opacity:0}to{opacity:1}}
+.modal .box{background:var(--panel);padding:24px;border-radius:14px;max-width:500px;width:90%;animation:slide .3s}
+img.thumb{max-width:200px;border-radius:8px;border:1px solid var(--line)}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--panel);padding:14px 20px;border-radius:10px;border-left:4px solid var(--acc);animation:slide .3s;z-index:100;max-width:350px}
+@media(max-width:800px){.wrap{grid-template-columns:1fr}aside{position:sticky;top:0;z-index:10}aside a{display:inline-block}}
+</style>
+</head>
+<body>
+<div class="splash"><h1>ADULTBLOG · ADMIN</h1></div>
+
+<div id="loginView" class="login hidden">
+  <h1>Admin Sign In</h1>
+  <p>Restricted area · authorized personnel only</p>
+  <div style="display:grid;gap:12px">
+    <input id="email" placeholder="Email" value="admin@adultblog.com"/>
+    <input id="pass" type="password" placeholder="Password"/>
+    <button onclick="login()">Sign In</button>
+    <div id="loginErr" style="color:var(--bad);font-size:13px"></div>
+  </div>
+</div>
+
+<div id="app" class="wrap hidden">
+  <aside>
+    <div class="brand">◈ ADULTBLOG</div>
+    <a data-view="overview" class="active">📊 Overview</a>
+    <a data-view="verifications">🪪 Verifications</a>
+    <a data-view="assessments">✅ Age Assessments</a>
+    <a data-view="users">👥 Users</a>
+    <a data-view="content">🎬 Content Review</a>
+    <a data-view="lives">🔴 Live Streams</a>
+    <a data-view="withdrawals">💸 Payouts</a>
+    <a data-view="settings">⚙️ Settings</a>
+    <a data-view="audit">📜 Audit Log</a>
+    <a onclick="logout()" style="color:var(--bad);margin-top:20px">🚪 Sign Out</a>
+  </aside>
+  <main>
+    <div class="top">
+      <h2 id="viewTitle">Overview</h2>
+      <div class="row"><span id="whoami" style="color:var(--mut);font-size:13px"></span></div>
+    </div>
+    <div id="viewBody"></div>
+  </main>
+</div>
+
+<script>
+const API = ''; // same origin
+let TOKEN = localStorage.getItem('ab_admin_token');
+let ME = null;
+
+const api = async (path, opts={}) => {
+  const r = await fetch(API + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(TOKEN?{'Authorization':'Bearer '+TOKEN}:{}), ...(opts.headers||{}) }
+  });
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(j.error || 'Request failed');
+  return j;
+};
+const toast = (m) => {
+  const t = document.createElement('div'); t.className='toast'; t.textContent=m;
+  document.body.appendChild(t); setTimeout(()=>t.remove(),3000);
+};
+const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (c) => '$'+((c||0)/100).toFixed(2);
+const badge = (t,c) => `<span class="badge ${c}">${esc(t)}</span>`;
+
+async function login(){
+  try {
+    const {email,pass} = { email: document.getElementById('email').value, pass: document.getElementById('pass').value };
+    const j = await api('/api/auth/login', { method:'POST', body: JSON.stringify({ email, password: pass }) });
+    if (j.user.role !== 'admin') throw new Error('Not an admin account');
+    TOKEN = j.token; ME = j.user; localStorage.setItem('ab_admin_token', TOKEN);
+    boot();
+  } catch(e){ document.getElementById('loginErr').textContent = e.message; }
+}
+function logout(){ localStorage.removeItem('ab_admin_token'); location.reload(); }
+
+async function boot(){
+  try {
+    const me = await api('/api/auth/me');
+    if (me.user.role !== 'admin') { logout(); return; }
+    ME = me.user;
+    document.getElementById('loginView').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    document.getElementById('whoami').textContent = '👤 ' + me.user.email;
+    document.querySelectorAll('aside a[data-view]').forEach(a =>
+      a.addEventListener('click', ()=>{
+        document.querySelectorAll('aside a').forEach(x=>x.classList.remove('active'));
+        a.classList.add('active');
+        show(a.dataset.view);
+      }));
+    show('overview');
+  } catch(e) {
+    localStorage.removeItem('ab_admin_token');
+    document.getElementById('loginView').classList.remove('hidden');
+  }
+}
+
+const views = {
+  async overview(){
+    const s = await api('/api/admin/overview');
+    document.getElementById('viewTitle').textContent = 'Platform Overview';
+    return `<div class="cards">
+      ${['users','clients','models','managers','liveNow','pendingVerifications','pendingAssessments','pendingContent','pendingPayouts'].map(k=>`
+        <div class="card"><div class="k">${k.replace(/([A-Z])/g,' $1').trim()}</div><div class="v">${s[k]}</div></div>`).join('')}
+      <div class="card"><div class="k">Gross Volume</div><div class="v">${money(s.gmv_cents)}</div></div>
+      <div class="card"><div class="k">Platform Fees</div><div class="v">${money(s.platform_fees_cents)}</div></div>
+    </div>
+    <p style="color:var(--mut)">Everything on this platform routes through you. Approve verifications and age assessments first; models can't stream until you mark them eligible.</p>`;
+  },
+  async verifications(){
+    const j = await api('/api/admin/verifications');
+    document.getElementById('viewTitle').textContent = 'Identity Verifications';
+    return `<table><thead><tr><th>User</th><th>Role</th><th>ID Type</th><th>DOB on ID</th><th>Age</th><th>Status</th><th>Docs</th><th></th></tr></thead><tbody>
+    ${j.verifications.map(v=>`<tr>
+      <td>${esc(v.name)}<br><span style="color:var(--mut);font-size:11px">${esc(v.email)}</span></td>
+      <td>${badge(v.role,'b-mut')}</td>
+      <td>${esc(v.id_type)}<br><span style="color:var(--mut);font-size:11px">${esc(v.id_number)}</span></td>
+      <td>${esc(v.dob_declared)}</td>
+      <td>${v.age_on_id>=18?badge(v.age_on_id+'y','b-ok'):badge(v.age_on_id+'y','b-bad')}</td>
+      <td>${v.status==='approved'?badge('approved','b-ok'):v.status==='rejected'?badge('rejected','b-bad'):badge('pending','b-warn')}</td>
+      <td><a href="/api/admin/verifications/${v.id}/file/id?token=${TOKEN}" target="_blank" style="color:var(--acc)">ID</a> · <a href="/api/admin/verifications/${v.id}/file/selfie?token=${TOKEN}" target="_blank" style="color:var(--acc)">Selfie</a></td>
+      <td>${v.status==='pending'?`<button class="ok" onclick="decideVer(${v.id},'approved')">Approve</button> <button class="bad" onclick="decideVer(${v.id},'rejected')">Reject</button>`:''}</td>
+    </tr>`).join('')||`<tr><td colspan="8" style="text-align:center;color:var(--mut)">No verifications yet.</td></tr>`}
+    </tbody></table>`;
+  },
+  async assessments(){
+    const j = await api('/api/admin/assessments');
+    document.getElementById('viewTitle').textContent = 'Model Age & Eligibility Assessments';
+    return `<p style="color:var(--mut)">Confirm the model is 18+ (born 2008 or earlier per policy) before authorizing her to stream and publish content.</p>
+    <table><thead><tr><th>Model</th><th>Agency</th><th>DOB on ID</th><th>Age</th><th>ID</th><th></th></tr></thead><tbody>
+    ${j.assessments.map(a=>`<tr>
+      <td>${esc(a.name)}<br><span style="color:var(--mut);font-size:11px">${esc(a.email)}</span></td>
+      <td>${esc(a.agency_name||'—')}</td>
+      <td>${esc(a.id_dob||a.dob)}</td>
+      <td>${a.age>=18?badge(a.age+'y','b-ok'):badge(a.age+'y','b-bad')}</td>
+      <td style="font-size:11px;color:var(--mut)">${esc(a.id_ref||'—')}</td>
+      <td>
+        <button class="ok" onclick="decideAssess(${a.id},'eligible')" ${a.age<18?'disabled style="opacity:.4"':''}>Mark Eligible</button>
+        <button class="bad" onclick="decideAssess(${a.id},'rejected')">Reject</button>
+      </td>
+    </tr>`).join('')||`<tr><td colspan="6" style="text-align:center;color:var(--mut)">No assessments pending.</td></tr>`}
+    </tbody></table>`;
+  },
+  async users(){
+    const j = await api('/api/admin/users');
+    document.getElementById('viewTitle').textContent = 'Users';
+    return `<table><thead><tr><th>Name</th><th>Role</th><th>Agency</th><th>Status</th><th>Verified</th><th>Wallet</th><th>Actions</th></tr></thead><tbody>
+    ${j.users.map(u=>`<tr>
+      <td>${esc(u.name)}<br><span style="color:var(--mut);font-size:11px">${esc(u.email)}</span></td>
+      <td>${badge(u.role,'b-mut')}</td>
+      <td>${esc(u.agency_name||'—')}</td>
+      <td>${u.status==='active'?badge('active','b-ok'):u.status==='suspended'?badge('suspended','b-bad'):badge(u.status,'b-warn')}</td>
+      <td>${u.verified?badge('✓','b-ok'):badge('✗','b-bad')} ${u.eligible?badge('elig','b-ok'):''} ${u.restricted?badge('restricted','b-bad'):''}</td>
+      <td>${money(u.wallet_cents)}</td>
+      <td>
+        ${u.status==='suspended'?`<button class="ok" onclick="setStatus(${u.id},'active')">Unsuspend</button>`:`<button class="bad" onclick="setStatus(${u.id},'suspended')">Suspend</button>`}
+        ${u.role==='client'?`<button class="warn" onclick="restrict(${u.id})">${u.restricted?'Unrestrict':'Restrict'}</button>`:''}
+        ${u.role==='model'?`<button class="ghost" onclick="directive(${u.id})">Directive</button>`:''}
+      </td>
+    </tr>`).join('')}
+    </tbody></table>`;
+  },
+  async content(){
+    const j = await api('/api/admin/content');
+    document.getElementById('viewTitle').textContent = 'Content Moderation';
+    return `<table><thead><tr><th>Model</th><th>Title</th><th>Kind</th><th>Price</th><th>Status</th><th></th></tr></thead><tbody>
+    ${j.content.map(c=>`<tr>
+      <td>${esc(c.model_name)}</td><td>${esc(c.title)}</td><td>${esc(c.kind)}</td><td>${money(c.price_cents)}</td>
+      <td>${c.status==='approved'?badge('approved','b-ok'):c.status==='rejected'?badge('rejected','b-bad'):badge('pending','b-warn')}</td>
+      <td>${c.status==='pending'?`<button class="ok" onclick="decideContent(${c.id},'approved')">Approve</button> <button class="bad" onclick="decideContent(${c.id},'rejected')">Reject</button>`:''}</td>
+    </tr>`).join('')||`<tr><td colspan="6" style="text-align:center;color:var(--mut)">No content uploaded yet.</td></tr>`}
+    </tbody></table>`;
+  },
+  async lives(){
+    const j = await api('/api/admin/lives');
+    document.getElementById('viewTitle').textContent = 'Live Streams';
+    return `<table><thead><tr><th>Model</th><th>Title</th><th>Status</th><th>Price</th><th>Peak</th><th>Started</th><th></th></tr></thead><tbody>
+    ${j.lives.map(l=>`<tr>
+      <td>${esc(l.model_name)}</td><td>${esc(l.title)}</td>
+      <td>${l.status==='live'?badge('🔴 LIVE','b-bad'):badge(l.status,'b-mut')}</td>
+      <td>${money(l.price_cents)}</td><td>${l.peak_viewers}</td><td>${esc(l.started_at||'—')}</td>
+      <td>${l.status==='live'?`<button class="bad" onclick="endLive(${l.id})">Force End</button>`:''}</td>
+    </tr>`).join('')||`<tr><td colspan="7" style="text-align:center;color:var(--mut)">No lives yet.</td></tr>`}
+    </tbody></table>`;
+  },
+  async withdrawals(){
+    const j = await api('/api/admin/withdrawals');
+    document.getElementById('viewTitle').textContent = 'Payouts';
+    return `<table><thead><tr><th>Model</th><th>Amount</th><th>Status</th><th>Manager Note</th><th></th></tr></thead><tbody>
+    ${j.withdrawals.map(w=>`<tr>
+      <td>${esc(w.model_name)}<br><span style="color:var(--mut);font-size:11px">${esc(w.email)}</span></td>
+      <td><strong>${money(w.amount_cents)}</strong></td>
+      <td>${w.status==='paid'?badge('paid','b-ok'):w.status==='rejected'?badge('rejected','b-bad'):badge(w.status,'b-warn')}</td>
+      <td style="font-size:12px">${esc(w.manager_note||'—')}</td>
+      <td>${w.status==='pending_admin'?`<button class="ok" onclick="payout(${w.id},'pay')">Pay Out</button> <button class="bad" onclick="payout(${w.id},'reject')">Reject</button>`:''}</td>
+    </tr>`).join('')||`<tr><td colspan="5" style="text-align:center;color:var(--mut)">No payouts.</td></tr>`}
+    </tbody></table>`;
+  },
+  async settings(){
+    const s = await api('/api/admin/settings');
+    document.getElementById('viewTitle').textContent = 'Platform Settings';
+    return `<div style="max-width:500px;display:grid;gap:14px">
+      <div><label style="color:var(--mut);font-size:12px">Platform Fee %</label><input id="s_fee" value="${s.platform_fee_pct}"/></div>
+      <div><label style="color:var(--mut);font-size:12px">Minimum Withdrawal (cents)</label><input id="s_min" value="${s.min_withdraw_cents}"/></div>
+      <div><label style="color:var(--mut);font-size:12px">Minimum Age (hard floor: 18)</label><input id="s_age" value="${s.min_age}"/></div>
+      <button onclick="saveSettings()">Save Settings</button>
+    </div>`;
+  },
+  async audit(){
+    const j = await api('/api/admin/audit');
+    document.getElementById('viewTitle').textContent = 'Audit Log';
+    return `<table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Meta</th></tr></thead><tbody>
+    ${j.log.map(a=>`<tr><td>${esc(a.created_at)}</td><td>${esc(a.actor||'—')}</td><td>${badge(a.action,'b-mut')}</td><td>${esc(a.target||'')}</td><td style="font-size:11px;color:var(--mut)">${esc(a.meta||'')}</td></tr>`).join('')}
+    </tbody></table>`;
+  },
+};
+
+async function show(v){
+  const body = document.getElementById('viewBody');
+  body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--mut)">Loading…</div>';
+  try { body.innerHTML = await views[v](); }
+  catch(e) { body.innerHTML = `<div style="color:var(--bad);padding:20px">${esc(e.message)}</div>`; }
+}
+
+async function decideVer(id, decision){
+  const notes = decision==='rejected' ? prompt('Rejection reason (optional):') : '';
+  try { await api('/api/admin/verifications/'+id+'/decide',{method:'POST',body:JSON.stringify({decision,notes})}); toast('Done'); show('verifications'); }
+  catch(e){ toast(e.message); }
+}
+async function decideAssess(id, decision){
+  const notes = decision==='rejected' ? prompt('Rejection reason:') : '';
+  try { await api('/api/admin/assessments/'+id+'/decide',{method:'POST',body:JSON.stringify({decision,notes})}); toast('Done'); show('assessments'); }
+  catch(e){ toast(e.message); }
+}
+async function decideContent(id, decision){
+  try { await api('/api/admin/content/'+id+'/decide',{method:'POST',body:JSON.stringify({decision})}); toast('Done'); show('content'); }
+  catch(e){ toast(e.message); }
+}
+async function setStatus(id, status){
+  try { await api('/api/admin/users/'+id+'/status',{method:'POST',body:JSON.stringify({status})}); toast('Updated'); show('users'); }
+  catch(e){ toast(e.message); }
+}
+async function restrict(id){
+  try { await api('/api/admin/users/'+id+'/restrict',{method:'POST',body:'{}'}); toast('Updated'); show('users'); }
+  catch(e){ toast(e.message); }
+}
+async function directive(id){
+  const message = prompt('Message to model:');
+  if (!message) return;
+  try { await api('/api/admin/models/'+id+'/directive',{method:'POST',body:JSON.stringify({message})}); toast('Sent'); }
+  catch(e){ toast(e.message); }
+}
+async function endLive(id){
+  if (!confirm('Force end this live?')) return;
+  try { await api('/api/admin/lives/'+id+'/end',{method:'POST',body:'{}'}); toast('Ended'); show('lives'); }
+  catch(e){ toast(e.message); }
+}
+async function payout(id, action){
+  const note = prompt(action==='pay'?'Payout reference (optional):':'Rejection reason:');
+  try { await api('/api/admin/withdrawals/'+id+'/'+action,{method:'POST',body:JSON.stringify({note})}); toast('Done'); show('withdrawals'); }
+  catch(e){ toast(e.message); }
+}
+async function saveSettings(){
+  try { await api('/api/admin/settings',{method:'POST',body:JSON.stringify({
+    platform_fee_pct: document.getElementById('s_fee').value,
+    min_withdraw_cents: document.getElementById('s_min').value,
+    min_age: document.getElementById('s_age').value })});
+    toast('Saved'); }
+  catch(e){ toast(e.message); }
+}
+
+if (TOKEN) boot(); else { document.getElementById('loginView').classList.remove('hidden'); }
+</script>
+</body>
+</html>
