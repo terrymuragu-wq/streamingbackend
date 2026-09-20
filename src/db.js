@@ -8,8 +8,15 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'adultblog.db');
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+let DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'adultblog.db');
+try {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+} catch (err) {
+  // /var/data not writable (no Render disk attached yet) — fall back to ./data so the app still boots
+  console.error(`[db] mkdir failed for ${path.dirname(DB_PATH)} (${err.code}); falling back to ./data — data will NOT persist across redeploys until a disk is attached`);
+  DB_PATH = path.join(__dirname, '..', 'data', 'adultblog.db');
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+}
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');

@@ -8,8 +8,15 @@ const { requireAuth, requireRole } = require('../auth');
 const router = express.Router();
 router.use(requireAuth, requireRole('model'));
 
-const UP = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads');
-fs.mkdirSync(UP, { recursive: true });
+let UP = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads');
+try {
+  fs.mkdirSync(UP, { recursive: true });
+} catch (err) {
+  // /var/data/uploads not writable (no Render disk attached yet) — fall back to local ./uploads
+  console.error(`[uploads] mkdir failed for ${UP} (${err.code}); falling back to local ./uploads`);
+  UP = path.join(__dirname, '..', '..', 'uploads');
+  fs.mkdirSync(UP, { recursive: true });
+}
 const upload = multer({
   storage: multer.diskStorage({
     destination: UP,
