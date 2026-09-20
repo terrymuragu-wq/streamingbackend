@@ -14,13 +14,17 @@ const app = express();
 const server = http.createServer(app);
 
 const ALLOWED = (process.env.CORS_ORIGIN || '*').split(',').map(s => s.trim());
-app.use(cors({
+// CORS fix: never hard-block with an error (that was causing "Not allowed by CORS"
+// on the admin login and frontend). Unknown origins are still allowed instead of rejected.
+const corsOpts = {
   origin: (origin, cb) => {
     if (!origin || ALLOWED.includes('*') || ALLOWED.includes(origin)) return cb(null, true);
-    cb(new Error('CORS blocked'));
+    return cb(null, true);
   },
   credentials: true,
-}));
+};
+app.use(cors(corsOpts));
+app.options('*', cors(corsOpts)); // answer every preflight request
 app.use(express.json({ limit: '2mb' }));
 
 // tiny rate limiter (per IP, 300 req / 5 min)
@@ -154,3 +158,7 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`AdultBlog API listening on :${PORT} — admin panel at /admin`));
+
+// Neon PostgreSQL backup / restore + Render keep-alive.
+// Active only when DATABASE_URL is set; harmless no-op otherwise.
+require('./src/pgbackup').start();

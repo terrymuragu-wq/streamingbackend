@@ -26,3 +26,9 @@ services:
         value: /var/data/uploads
       - key: CORS_ORIGIN
         value: "*"
+      - key: DATABASE_URL
+        sync: false
+      - key: SELF_URL
+        value: "https://adultblog-api.onrender.com"
+      - key: SYNC_INTERVAL_MS
+        value: "240000"
