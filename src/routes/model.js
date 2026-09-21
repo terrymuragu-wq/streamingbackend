@@ -41,8 +41,8 @@ router.get('/dashboard', (req, res) => {
   const notifications = q.all('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 30', req.user.id);
   const subs = q.get("SELECT COUNT(*) c FROM subscriptions WHERE model_id=? AND status='active'", req.user.id).c;
   const tips = q.get('SELECT COALESCE(SUM(amount_cents),0) s FROM tips WHERE to_model=?', req.user.id).s;
-  // 30-day hold: only earnings older than the hold period can be withdrawn
-  const holdDays = parseInt(getSetting('withdrawal_hold_days', '30'), 10);
+  // 7-day hold: only earnings older than the hold period can be withdrawn
+  const holdDays = parseInt(getSetting('withdrawal_hold_days', '7'), 10);
   const matured = q.get(`SELECT COALESCE(SUM(amount_cents),0) s FROM transactions WHERE user_id=? AND kind='earning' AND created_at <= datetime('now', ?)`, req.user.id, `-${holdDays} days`).s;
   const paidOut = q.get(`SELECT COALESCE(SUM(-amount_cents),0) s FROM transactions WHERE user_id=? AND kind='payout'`, req.user.id).s;
   const pendingW = q.get("SELECT COALESCE(SUM(amount_cents),0) s FROM withdrawals WHERE model_id=? AND status IN ('pending_manager','pending_admin')", req.user.id).s;
@@ -138,12 +138,12 @@ router.post('/content', upload.single('file'), (req, res) => {
   res.json({ ok: true, content_id: id, message: 'Uploaded. It goes on sale after admin approval.' });
 });
 
-// Withdrawal request — earnings must be 30+ days old, and the ADMIN approves & pays
+// Withdrawal request — earnings must be 7+ days old, and the ADMIN approves & pays
 router.post('/withdraw', (req, res) => {
   const cents = Math.round(Number(req.body.amount_cents));
   const min = parseInt(getSetting('min_withdraw_cents', '5000'), 10);
   if (!Number.isFinite(cents) || cents < min) return res.status(400).json({ error: `Minimum withdrawal is $${(min / 100).toFixed(2)}` });
-  const holdDays = parseInt(getSetting('withdrawal_hold_days', '30'), 10);
+  const holdDays = parseInt(getSetting('withdrawal_hold_days', '7'), 10);
   const matured = q.get(`SELECT COALESCE(SUM(amount_cents),0) s FROM transactions WHERE user_id=? AND kind='earning' AND created_at <= datetime('now', ?)`, req.user.id, `-${holdDays} days`).s;
   const paidOut = q.get(`SELECT COALESCE(SUM(-amount_cents),0) s FROM transactions WHERE user_id=? AND kind='payout'`, req.user.id).s;
   const pending = q.get("SELECT COALESCE(SUM(amount_cents),0) s FROM withdrawals WHERE model_id=? AND status IN ('pending_manager','pending_admin')", req.user.id).s;

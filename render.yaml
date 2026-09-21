@@ -31,4 +31,4 @@ services:
       - key: SELF_URL
         value: "https://adultblog-api.onrender.com"
       - key: SYNC_INTERVAL_MS
-        value: "240000"
+        value: "120000"

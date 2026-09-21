@@ -241,7 +241,9 @@ if (!getSetting('platform_fee_pct')) setSetting('platform_fee_pct', '20');
 if (!getSetting('min_withdraw_cents')) setSetting('min_withdraw_cents', '5000');
 if (!getSetting('min_age')) setSetting('min_age', '18');
 if (!getSetting('min_live_price_cents')) setSetting('min_live_price_cents', '15000');   // minimum $150 per stream ticket
-if (!getSetting('withdrawal_hold_days')) setSetting('withdrawal_hold_days', '30');       // earnings withdrawable after 30 days
+if (!getSetting('withdrawal_hold_days')) setSetting('withdrawal_hold_days', '7');        // earnings withdrawable after 7 days
+// Migrate installs seeded with the old 30-day default to the 7-day hold.
+if (getSetting('withdrawal_hold_days') === '30') setSetting('withdrawal_hold_days', '7');
 
 // ---------- seed admin ----------
 function seedAdmin() {
