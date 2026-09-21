@@ -157,6 +157,18 @@ router.post('/withdraw', (req, res) => {
   res.json({ ok: true, withdrawal_id: id });
 });
 
+// Profile picture upload — stored in uploads, served via /api/model/avatar/:userId
+router.post('/avatar', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Image file is required' });
+  if (!/\.(jpe?g|png|webp|gif)$/i.test(req.file.originalname || '')) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Only JPG/PNG/WEBP/GIF images allowed' });
+  }
+  q.run('UPDATE users SET avatar=? WHERE id=?', req.file.filename, req.user.id);
+  audit(req.user.id, 'avatar_updated', `user:${req.user.id}`);
+  res.json({ ok: true, avatar: req.file.filename });
+});
+
 router.post('/directives/:id/read', (req, res) => {
   q.run('UPDATE directives SET read=1 WHERE id=? AND to_model=?', req.params.id, req.user.id);
   res.json({ ok: true });

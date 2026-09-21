@@ -74,6 +74,23 @@ router.post('/users/:id/wallet', (req, res) => {
   res.json({ ok: true, balance_cents: q.get('SELECT wallet_cents AS w FROM users WHERE id=?', u.id).w });
 });
 
+// Add money to a MODEL's wallet from the admin panel — reflects instantly on the
+// model wallet AND on the agency's earnings totals (visible to the manager).
+router.post('/users/:id/wallet-model', (req, res) => {
+  const cents = Math.round(Number(req.body.amount_cents));
+  if (!Number.isFinite(cents) || cents <= 0 || cents > 10000000) return res.status(400).json({ error: 'Amount must be positive (max $100,000 per credit)' });
+  const u = q.get("SELECT * FROM users WHERE id=? AND role='model'", req.params.id);
+  if (!u) return res.status(404).json({ error: 'Model not found' });
+  q.run('UPDATE users SET wallet_cents = wallet_cents + ? WHERE id=?', cents, u.id);
+  q.run('UPDATE model_profiles SET total_earned_cents = total_earned_cents + ? WHERE user_id=?', cents, u.id);
+  q.run('INSERT INTO transactions(user_id,kind,amount_cents,ref) VALUES(?,?,?,?)', u.id, 'earning', cents, 'admin_payment');
+  notify(u.id, 'wallet', `$${(cents / 100).toFixed(2)} was paid into your wallet by the platform admin.`);
+  const ag = q.get('SELECT manager_id FROM agencies WHERE id=?', u.agency_id);
+  if (ag) notify(ag.manager_id, 'wallet', `Admin paid $${(cents / 100).toFixed(2)} to ${u.name} — reflected in your agency earnings.`);
+  audit(req.user.id, 'admin_model_payment', `user:${u.id}`, { cents });
+  res.json({ ok: true, balance_cents: q.get('SELECT wallet_cents AS w FROM users WHERE id=?', u.id).w });
+});
+
 // Admin directive to a model ("tell the model what to do")
 router.post('/models/:id/directive', (req, res) => {
   const msg = String(req.body.message || '').trim();

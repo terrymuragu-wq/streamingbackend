@@ -63,6 +63,15 @@ app.get('/api/stream/content/:id', requireAuth, (req, res) => {
   res.sendFile(p);
 });
 
+// Public avatar serving (only the file recorded on the user's profile — verification docs stay protected)
+app.get('/api/avatar/:userId', (req, res) => {
+  const u = q.get('SELECT avatar FROM users WHERE id=?', req.params.userId);
+  if (!u || !u.avatar) return res.status(404).json({ error: 'No avatar' });
+  const p = path.join(UP, path.basename(u.avatar));
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'File missing' });
+  res.sendFile(p);
+});
+
 app.get('/api/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 app.get('/', (req, res) => res.json({ service: 'AdultBlog API', docs: '/api/health', admin: '/admin' }));
 
@@ -73,6 +82,7 @@ const io = new Server(server, {
 app.set('io', io);
 
 const viewers = new Map(); // live_id -> Set(socketId)
+const endTimers = new Map(); // live_id -> grace timeout (broadcaster reconnect window)
 
 io.use((socket, next) => {
   try {
@@ -96,6 +106,8 @@ io.on('connection', (socket) => {
       const access = q.get('SELECT id FROM live_access WHERE live_id=? AND user_id=?', live_id, socket.user.id);
       if (!access) return socket.emit('error_msg', { error: 'Payment required to watch this live' });
     }
+    // Broadcaster rejoined within the grace window — cancel the pending auto-end
+    if (isModel && endTimers.has(live_id)) { clearTimeout(endTimers.get(live_id)); endTimers.delete(live_id); }
     socket.join(`live:${live_id}`);
     socket.data.live_id = live_id;
     socket.data.is_broadcaster = isModel;
@@ -132,9 +144,25 @@ io.on('connection', (socket) => {
       viewers.get(lid).delete(socket.id);
       io.to(`live:${lid}`).emit('viewer_count', { live_id: lid, count: Math.max(0, viewers.get(lid).size - 1) });
       if (socket.data.is_broadcaster) {
-        q.run("UPDATE lives SET status='ended', ended_at=datetime('now') WHERE id=? AND status='live'", lid);
-        q.run('UPDATE model_profiles SET is_live=0 WHERE user_id=?', socket.user.id);
-        io.to(`live:${lid}`).emit('live_ended', { live_id: lid });
+        // Grace window: a page refresh or brief network drop must NOT end the stream.
+        // The live only ends if the broadcaster does not reconnect within 90 seconds,
+        // or when the model/admin explicitly ends it.
+        const uid = socket.user.id;
+        if (endTimers.has(lid)) clearTimeout(endTimers.get(lid));
+        endTimers.set(lid, setTimeout(() => {
+          endTimers.delete(lid);
+          const stillLive = q.get("SELECT id FROM lives WHERE id=? AND status='live'", lid);
+          if (!stillLive) return;
+          const back = [...(viewers.get(lid) || [])].some(sid => {
+            const s = io.sockets.sockets.get(sid);
+            return s && s.data.is_broadcaster;
+          });
+          if (back) return;
+          q.run("UPDATE lives SET status='ended', ended_at=datetime('now') WHERE id=? AND status='live'", lid);
+          q.run('UPDATE model_profiles SET is_live=0 WHERE user_id=?', uid);
+          io.to(`live:${lid}`).emit('live_ended', { live_id: lid });
+        }, 90000));
+        io.to(`live:${lid}`).emit('broadcaster_reconnecting', { live_id: lid });
       }
     }
   });

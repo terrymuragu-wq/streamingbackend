@@ -208,7 +208,7 @@ const views = {
       <td>
         ${u.status==='suspended'?`<button class="ok" onclick="setStatus(${u.id},'active')">Unsuspend</button>`:`<button class="bad" onclick="setStatus(${u.id},'suspended')">Suspend</button>`}
         ${u.role==='client'?`<button class="warn" onclick="restrict(${u.id})">${u.restricted?'Unrestrict':'Restrict'}</button> <button class="ok" onclick="addMoney(${u.id})">💵 Add Money</button>`:''}
-        ${u.role==='model'?`<button class="ghost" onclick="directive(${u.id})">Directive</button>`:''}
+        ${u.role==='model'?`<button class="ok" onclick="payModel(${u.id})">💵 Pay Model</button> <button class="ghost" onclick="directive(${u.id})">Directive</button>`:''}
       </td>
     </tr>`).join('')}
     </tbody></table>`;
@@ -364,6 +364,13 @@ async function addMoney(id){
   if (!(amt > 0)) return;
   try { const j = await api('/api/admin/users/'+id+'/wallet',{method:'POST',body:JSON.stringify({amount_cents:Math.round(amt*100)})});
     toast('✅ Wallet credited — new balance '+money(j.balance_cents)); show('users'); }
+  catch(e){ toast(e.message); }
+}
+async function payModel(id){
+  const amt = Number(prompt("Amount in USD to pay this model (shows instantly on her wallet and the agency earnings):"));
+  if (!(amt > 0)) return;
+  try { const j = await api('/api/admin/users/'+id+'/wallet-model',{method:'POST',body:JSON.stringify({amount_cents:Math.round(amt*100)})});
+    toast('✅ Model paid — new balance '+money(j.balance_cents)); show('users'); }
   catch(e){ toast(e.message); }
 }
 async function createAgency(){
