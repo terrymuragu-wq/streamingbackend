@@ -41,14 +41,16 @@ router.get('/dashboard', (req, res) => {
   const notifications = q.all('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 30', req.user.id);
   const subs = q.get("SELECT COUNT(*) c FROM subscriptions WHERE model_id=? AND status='active'", req.user.id).c;
   const tips = q.get('SELECT COALESCE(SUM(amount_cents),0) s FROM tips WHERE to_model=?', req.user.id).s;
-  // 30-day withdrawal rule: withdrawals unlock 30 days after the account was created
-  const joinedMs = Date.parse(String(q.get('SELECT created_at c FROM users WHERE id=?', req.user.id).c).replace(' ', 'T') + 'Z');
-  const withdrawDaysLeft = Math.max(0, 30 - Math.floor((Date.now() - joinedMs) / 86400000));
+  // 30-day hold: only earnings older than the hold period can be withdrawn
+  const holdDays = parseInt(getSetting('withdrawal_hold_days', '30'), 10);
+  const matured = q.get(`SELECT COALESCE(SUM(amount_cents),0) s FROM transactions WHERE user_id=? AND kind='earning' AND created_at <= datetime('now', ?)`, req.user.id, `-${holdDays} days`).s;
+  const paidOut = q.get(`SELECT COALESCE(SUM(-amount_cents),0) s FROM transactions WHERE user_id=? AND kind='payout'`, req.user.id).s;
+  const pendingW = q.get("SELECT COALESCE(SUM(amount_cents),0) s FROM withdrawals WHERE model_id=? AND status IN ('pending_manager','pending_admin')", req.user.id).s;
   res.json({
     profile: p, lives, content, withdrawals, directives, notifications,
     stats: { wallet_cents: req.user.wallet_cents, subscribers: subs, tips_cents: tips, status: req.user.status,
-             verified: req.user.verified, agency_approved: req.user.agency_approved, eligible: req.user.eligible,
-             withdraw_days_left: withdrawDaysLeft }
+             available_withdraw_cents: Math.max(0, matured - paidOut - pendingW), hold_days: holdDays,
+             verified: req.user.verified, agency_approved: req.user.agency_approved, eligible: req.user.eligible }
   });
 });
 
@@ -69,9 +71,9 @@ router.post('/lives/schedule', (req, res) => {
   const { title, scheduled_at, price_cents } = req.body || {};
   if (!title || !scheduled_at) return res.status(400).json({ error: 'title and scheduled_at are required' });
   if (new Date(scheduled_at).getTime() < Date.now() + 60000) return res.status(400).json({ error: 'Schedule time must be in the future' });
-  const price = Math.max(0, Math.round(Number(price_cents) || 0));
-  const minLive = parseInt(getSetting('min_live_price_cents', '15000'), 10);
-  if (price > 0 && price < minLive) return res.status(400).json({ error: `Minimum stream ticket is $${(minLive / 100).toFixed(2)} — set at least that, or 0 for subscribers-only.` });
+  let price = Math.max(0, Math.round(Number(price_cents) || 0));
+  const minLiveSched = parseInt(getSetting('min_live_price_cents', '15000'), 10);
+  if (price > 0 && price < minLiveSched) price = minLiveSched; // $150 minimum per stream
   const id = q.run("INSERT INTO lives(model_id,title,price_cents,scheduled_at,status) VALUES(?,?,?,?,'scheduled')",
     req.user.id, String(title).slice(0, 120), price, scheduled_at).lastInsertRowid;
   const subs = q.all("SELECT client_id FROM subscriptions WHERE model_id=? AND status='active'", req.user.id);
@@ -92,9 +94,9 @@ router.post('/lives/go-live', (req, res) => {
     q.run("UPDATE lives SET status='live', started_at=datetime('now') WHERE id=?", liveId);
   } else {
     const title = String(req.body.title || `${req.user.name} is live`).slice(0, 120);
-    const price = Math.max(0, Math.round(Number(req.body.price_cents) || 0));
+    let price = Math.max(0, Math.round(Number(req.body.price_cents) || 0));
     const minLive = parseInt(getSetting('min_live_price_cents', '15000'), 10);
-    if (price > 0 && price < minLive) return res.status(400).json({ error: `Minimum stream ticket is $${(minLive / 100).toFixed(2)} — set at least that, or 0 for subscribers-only.` });
+    if (price > 0 && price < minLive) price = minLive; // $150 minimum per stream
     liveId = q.run("INSERT INTO lives(model_id,title,price_cents,status,started_at) VALUES(?,?,?,'live',datetime('now'))",
       req.user.id, title, price).lastInsertRowid;
   }
@@ -102,11 +104,13 @@ router.post('/lives/go-live', (req, res) => {
   const l = q.get('SELECT title FROM lives WHERE id=?', liveId);
   const subs = q.all("SELECT client_id FROM subscriptions WHERE model_id=? AND status='active'", req.user.id);
   subs.forEach(s => notify(s.client_id, 'live_now', `${req.user.name} is LIVE now: "${l.title}"`, `/watch.html?live=${liveId}`));
+  // Clients who already paid for this stream get direct access the moment it starts
+  const buyers = q.all('SELECT user_id FROM live_access WHERE live_id=?', liveId);
+  buyers.forEach(b => notify(b.user_id, 'live_now', `${req.user.name} is LIVE now: "${l.title}" — tap to watch.`, `/watch.html?live=${liveId}`));
   const io = req.app.get('io');
   if (io) io.emit('model_went_live', { model_id: req.user.id, name: req.user.name, live_id: liveId, title: l.title });
   audit(req.user.id, 'went_live', `live:${liveId}`);
-  const lv = q.get('SELECT started_at, price_cents, title FROM lives WHERE id=?', liveId);
-  res.json({ ok: true, live_id: liveId, started_at: lv.started_at, price_cents: lv.price_cents, title: lv.title });
+  res.json({ ok: true, live_id: liveId });
 });
 
 router.post('/lives/:id/end', (req, res) => {
@@ -134,22 +138,22 @@ router.post('/content', upload.single('file'), (req, res) => {
   res.json({ ok: true, content_id: id, message: 'Uploaded. It goes on sale after admin approval.' });
 });
 
-// Withdrawal request — manager must approve first, then admin pays
+// Withdrawal request — earnings must be 30+ days old, and the ADMIN approves & pays
 router.post('/withdraw', (req, res) => {
   const cents = Math.round(Number(req.body.amount_cents));
   const min = parseInt(getSetting('min_withdraw_cents', '5000'), 10);
   if (!Number.isFinite(cents) || cents < min) return res.status(400).json({ error: `Minimum withdrawal is $${(min / 100).toFixed(2)}` });
-  if (cents > req.user.wallet_cents) return res.status(400).json({ error: 'Amount exceeds your available balance' });
-  // Withdrawals unlock 30 days after the account was created; every payout is approved by the admin.
-  const acct = q.get('SELECT created_at FROM users WHERE id=?', req.user.id);
-  const joinedMs = Date.parse(String(acct.created_at).replace(' ', 'T') + 'Z');
-  const daysJoined = Math.floor((Date.now() - joinedMs) / 86400000);
-  if (daysJoined < 30) return res.status(400).json({ error: `Withdrawals unlock 30 days after joining (${30 - daysJoined} day(s) remaining). Every payout is approved by the platform admin.` });
+  const holdDays = parseInt(getSetting('withdrawal_hold_days', '30'), 10);
+  const matured = q.get(`SELECT COALESCE(SUM(amount_cents),0) s FROM transactions WHERE user_id=? AND kind='earning' AND created_at <= datetime('now', ?)`, req.user.id, `-${holdDays} days`).s;
+  const paidOut = q.get(`SELECT COALESCE(SUM(-amount_cents),0) s FROM transactions WHERE user_id=? AND kind='payout'`, req.user.id).s;
   const pending = q.get("SELECT COALESCE(SUM(amount_cents),0) s FROM withdrawals WHERE model_id=? AND status IN ('pending_manager','pending_admin')", req.user.id).s;
-  if (pending + cents > req.user.wallet_cents) return res.status(400).json({ error: 'You already have pending withdrawals covering this balance' });
-  const id = q.run("INSERT INTO withdrawals(model_id,amount_cents) VALUES(?,?)", req.user.id, cents).lastInsertRowid;
+  const available = Math.max(0, matured - paidOut - pending);
+  if (cents > available) return res.status(400).json({ error: `Earnings are held for ${holdDays} days before they can be withdrawn. Available now: $${(available / 100).toFixed(2)}` });
+  const id = q.run("INSERT INTO withdrawals(model_id,amount_cents,status) VALUES(?,?,'pending_admin')", req.user.id, cents).lastInsertRowid;
+  const admins = q.all("SELECT id FROM users WHERE role='admin'");
+  admins.forEach(a => notify(a.id, 'payout', `${req.user.name} requested a withdrawal of $${(cents / 100).toFixed(2)} — your approval needed.`));
   const ag = q.get('SELECT manager_id FROM agencies WHERE id=?', req.user.agency_id);
-  if (ag) notify(ag.manager_id, 'withdrawal', `${req.user.name} requested a withdrawal of $${(cents / 100).toFixed(2)} — your approval needed.`);
+  if (ag) notify(ag.manager_id, 'withdrawal', `${req.user.name} requested a withdrawal of $${(cents / 100).toFixed(2)} (sent to admin for approval).`);
   res.json({ ok: true, withdrawal_id: id });
 });
 

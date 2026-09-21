@@ -48,7 +48,6 @@ app.use('/api/client', require('./src/routes/client'));
 app.use('/api/model', require('./src/routes/model'));
 app.use('/api/manager', require('./src/routes/manager'));
 app.use('/api/admin', require('./src/routes/admin'));
-app.use('/api/support', require('./src/routes/support'));
 
 // Protected content streaming (paid content)
 const UP = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');

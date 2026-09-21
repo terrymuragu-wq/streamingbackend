@@ -204,14 +204,12 @@ CREATE TABLE IF NOT EXISTS chat (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS support_tickets (
+CREATE TABLE IF NOT EXISTS support_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
-  role TEXT NOT NULL,
-  subject TEXT,
   message TEXT NOT NULL,
+  reply TEXT,
   status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved')),
-  admin_reply TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   resolved_at TEXT
 );
@@ -242,7 +240,8 @@ const setSetting = (k, v) =>
 if (!getSetting('platform_fee_pct')) setSetting('platform_fee_pct', '20');
 if (!getSetting('min_withdraw_cents')) setSetting('min_withdraw_cents', '5000');
 if (!getSetting('min_age')) setSetting('min_age', '18');
-if (!getSetting('min_live_price_cents')) setSetting('min_live_price_cents', '15000'); // $150 minimum paid-stream ticket
+if (!getSetting('min_live_price_cents')) setSetting('min_live_price_cents', '15000');   // minimum $150 per stream ticket
+if (!getSetting('withdrawal_hold_days')) setSetting('withdrawal_hold_days', '30');       // earnings withdrawable after 30 days
 
 // ---------- seed admin ----------
 function seedAdmin() {

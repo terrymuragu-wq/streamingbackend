@@ -1,9 +1,9 @@
 const express = require('express');
-const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
 const { q, notify, audit, getSetting, setSetting } = require('../db');
 const { requireAuth, requireRole, ageFromDob } = require('../auth');
+const bcrypt = require('bcryptjs');
 
 const router = express.Router();
 router.use(requireAuth, requireRole('admin'));
@@ -20,7 +20,6 @@ router.get('/overview', (req, res) => {
     pendingContent: q.get("SELECT COUNT(*) c FROM content WHERE status='pending'").c,
     pendingAssessments: q.get("SELECT COUNT(*) c FROM users WHERE role='model' AND verified=1 AND agency_approved=1 AND eligible=0 AND status='pending'").c,
     pendingPayouts: q.get("SELECT COUNT(*) c FROM withdrawals WHERE status='pending_admin'").c,
-    openTickets: q.get("SELECT COUNT(*) c FROM support_tickets WHERE status='open'").c,
     gmv_cents: q.get("SELECT COALESCE(SUM(amount_cents),0) s FROM transactions WHERE amount_cents>0 AND kind IN ('subscribe','live_ticket','tip','content_unlock')").s,
     platform_fees_cents: q.get("SELECT COALESCE(SUM(-amount_cents),0) s FROM transactions WHERE kind='fee'").s,
   });
@@ -62,6 +61,19 @@ router.post('/users/:id/restrict', (req, res) => {
   res.json({ ok: true, restricted: u.restricted ? 0 : 1 });
 });
 
+// Add money to a client's wallet directly from the backend (usable immediately)
+router.post('/users/:id/wallet', (req, res) => {
+  const cents = Math.round(Number(req.body.amount_cents));
+  if (!Number.isFinite(cents) || cents === 0 || Math.abs(cents) > 10000000) return res.status(400).json({ error: 'Amount must be non-zero (max $100,000 per adjustment)' });
+  const u = q.get("SELECT * FROM users WHERE id=? AND role='client'", req.params.id);
+  if (!u) return res.status(404).json({ error: 'Client not found' });
+  q.run('UPDATE users SET wallet_cents = MAX(wallet_cents + ?, 0) WHERE id=?', cents, u.id);
+  q.run('INSERT INTO transactions(user_id,kind,amount_cents,ref) VALUES(?,?,?,?)', u.id, 'topup', cents, 'admin_adjustment');
+  notify(u.id, 'wallet', `$${(cents / 100).toFixed(2)} was added to your wallet by the platform.`);
+  audit(req.user.id, 'admin_wallet_adjust', `user:${u.id}`, { cents });
+  res.json({ ok: true, balance_cents: q.get('SELECT wallet_cents AS w FROM users WHERE id=?', u.id).w });
+});
+
 // Admin directive to a model ("tell the model what to do")
 router.post('/models/:id/directive', (req, res) => {
   const msg = String(req.body.message || '').trim();
@@ -71,6 +83,31 @@ router.post('/models/:id/directive', (req, res) => {
   q.run("INSERT INTO directives(from_id,from_role,to_model,message) VALUES(?,?,?,?)", req.user.id, 'admin', m.id, msg.slice(0, 500));
   notify(m.id, 'directive', `Message from platform admin: ${msg.slice(0, 80)}`);
   res.json({ ok: true });
+});
+
+// ---------- agencies: admin creates the agency + manager account + joining code ----------
+router.get('/agencies', (req, res) => {
+  res.json({ agencies: q.all(`SELECT a.*, u.name AS manager_name, u.email AS manager_email,
+      (SELECT COUNT(*) FROM users m WHERE m.agency_id=a.id AND m.role='model') AS model_count
+    FROM agencies a JOIN users u ON u.id=a.manager_id ORDER BY a.id DESC`) });
+});
+
+router.post('/agencies', (req, res) => {
+  const { agency_name, code, manager_name, manager_email, manager_password } = req.body || {};
+  if (!agency_name || !manager_name || !manager_email || !manager_password)
+    return res.status(400).json({ error: 'agency_name, manager_name, manager_email and manager_password are required' });
+  if (String(manager_password).length < 8) return res.status(400).json({ error: 'Manager password must be at least 8 characters' });
+  const email = String(manager_email).toLowerCase().trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid manager email' });
+  if (q.get('SELECT id FROM users WHERE email=?', email)) return res.status(409).json({ error: 'A user with this email already exists' });
+  const joinCode = (code && String(code).trim().toUpperCase()) || ('AG' + Math.random().toString(36).slice(2, 8).toUpperCase());
+  if (q.get('SELECT id FROM agencies WHERE code=?', joinCode)) return res.status(409).json({ error: 'That joining code is already in use — pick another' });
+  const mid = q.run("INSERT INTO users(email,pass_hash,name,role,status,verified,eligible) VALUES(?,?,?,'manager','active',1,0)",
+    email, bcrypt.hashSync(String(manager_password), 10), String(manager_name).trim()).lastInsertRowid;
+  const aid = q.run('INSERT INTO agencies(code,name,manager_id) VALUES(?,?,?)', joinCode, String(agency_name).trim(), mid).lastInsertRowid;
+  notify(mid, 'agency', `Your agency "${agency_name}" is ready. Joining code for your models: ${joinCode}`);
+  audit(req.user.id, 'agency_created', `agency:${aid}`, { code: joinCode, manager: email });
+  res.json({ ok: true, agency_id: aid, code: joinCode });
 });
 
 // ---------- verifications ----------
@@ -213,73 +250,19 @@ router.post('/withdrawals/:id/reject', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- client wallet top-up (admin adds funds directly from the backend) ----------
-router.post('/users/:id/wallet', (req, res) => {
-  const u = q.get("SELECT * FROM users WHERE id=? AND role='client'", req.params.id);
-  if (!u) return res.status(404).json({ error: 'Client not found' });
-  const cents = Math.round(Number(req.body.amount_cents));
-  if (!Number.isFinite(cents) || cents <= 0 || cents > 100000000) return res.status(400).json({ error: 'Enter a valid amount (max $1,000,000)' });
-  q.run('UPDATE users SET wallet_cents = wallet_cents + ? WHERE id=?', cents, u.id);
-  q.run('INSERT INTO transactions(user_id,kind,amount_cents,ref) VALUES(?,?,?,?)', u.id, 'topup', cents, `admin:${req.user.id}`);
-  notify(u.id, 'wallet', `$${(cents / 100).toFixed(2)} was added to your wallet by the platform.`);
-  audit(req.user.id, 'admin_wallet_topup', `user:${u.id}`, { cents });
-  res.json({ ok: true, balance_cents: q.get('SELECT wallet_cents AS w FROM users WHERE id=?', u.id).w });
-});
-
-// ---------- agencies & managers (created from the backend, not public signup) ----------
-router.get('/agencies', (req, res) => {
-  res.json({
-    agencies: q.all(`SELECT a.*, u.name AS manager_name, u.email AS manager_email,
-        (SELECT COUNT(*) FROM users m WHERE m.agency_id=a.id AND m.role='model') AS model_count
-      FROM agencies a JOIN users u ON u.id=a.manager_id ORDER BY a.id DESC LIMIT 100`)
-  });
-});
-
-router.post('/agencies', (req, res) => {
-  const { name, code, managerName, managerEmail, managerPassword } = req.body || {};
-  if (!name || !code || !managerName || !managerEmail || !managerPassword)
-    return res.status(400).json({ error: 'name, code, managerName, managerEmail and managerPassword are all required' });
-  if (String(managerPassword).length < 8) return res.status(400).json({ error: 'Manager password must be at least 8 characters' });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(managerEmail)) return res.status(400).json({ error: 'Invalid manager email' });
-  const upCode = String(code).trim().toUpperCase();
-  if (q.get('SELECT id FROM agencies WHERE code=?', upCode)) return res.status(409).json({ error: 'That joining code is already taken' });
-  if (q.get('SELECT id FROM users WHERE email=?', String(managerEmail).toLowerCase().trim()))
-    return res.status(409).json({ error: 'A user with that email already exists' });
-  const hash = bcrypt.hashSync(String(managerPassword), 10);
-  const mid = q.run(`INSERT INTO users(email,pass_hash,name,role,status,verified,eligible) VALUES(?,?,?,?,'active',1,1)`,
-    String(managerEmail).toLowerCase().trim(), hash, String(managerName).trim(), 'manager').lastInsertRowid;
-  const aid = q.run('INSERT INTO agencies(code,name,manager_id) VALUES(?,?,?)', upCode, String(name).trim(), mid).lastInsertRowid;
-  notify(mid, 'agency', `Your agency "${name}" is ready. Joining code for your models: ${upCode}`);
-  audit(req.user.id, 'agency_created', `agency:${aid}`, { code: upCode, manager: mid });
-  res.json({ ok: true, agency_id: aid, code: upCode, manager_id: mid });
-});
-
-router.post('/agencies/:id/status', (req, res) => {
-  const { status } = req.body || {};
-  if (!['active', 'suspended'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
-  const a = q.get('SELECT * FROM agencies WHERE id=?', req.params.id);
-  if (!a) return res.status(404).json({ error: 'Agency not found' });
-  q.run('UPDATE agencies SET status=? WHERE id=?', status, a.id);
-  notify(a.manager_id, 'agency', `Your agency was ${status === 'active' ? 'reactivated' : 'suspended'} by the platform.`);
-  audit(req.user.id, `agency_${status}`, `agency:${a.id}`);
-  res.json({ ok: true });
-});
-
-// ---------- help desk (problems typed by users land here for the admin to fix) ----------
+// ---------- help & support inbox ----------
 router.get('/support', (req, res) => {
-  res.json({
-    tickets: q.all(`SELECT t.*, u.name, u.email FROM support_tickets t JOIN users u ON u.id=t.user_id
-                    ORDER BY CASE t.status WHEN 'open' THEN 0 ELSE 1 END, t.id DESC LIMIT 100`)
-  });
+  res.json({ tickets: q.all(`SELECT s.*, u.name, u.email, u.role FROM support_messages s JOIN users u ON u.id=s.user_id
+                            ORDER BY CASE s.status WHEN 'open' THEN 0 ELSE 1 END, s.id DESC LIMIT 200`) });
 });
 
 router.post('/support/:id/resolve', (req, res) => {
-  const t = q.get('SELECT * FROM support_tickets WHERE id=?', req.params.id);
+  const t = q.get('SELECT * FROM support_messages WHERE id=?', req.params.id);
   if (!t) return res.status(404).json({ error: 'Ticket not found' });
-  const reply = String(req.body.reply || '').trim().slice(0, 1000);
-  q.run("UPDATE support_tickets SET status='resolved', admin_reply=?, resolved_at=datetime('now') WHERE id=?", reply || null, t.id);
-  notify(t.user_id, 'support_resolved', `Your help request was resolved${reply ? ': ' + reply.slice(0, 120) : '.'}`);
-  audit(req.user.id, 'ticket_resolved', `ticket:${t.id}`);
+  const reply = String(req.body.reply || '').slice(0, 500);
+  q.run("UPDATE support_messages SET status='resolved', reply=?, resolved_at=datetime('now') WHERE id=?", reply, t.id);
+  notify(t.user_id, 'support', `Support reply: ${reply || 'Your issue was marked as resolved.'}`);
+  audit(req.user.id, 'support_resolved', `ticket:${t.id}`);
   res.json({ ok: true });
 });
 
@@ -290,10 +273,11 @@ router.get('/settings', (req, res) => {
     min_withdraw_cents: getSetting('min_withdraw_cents', '5000'),
     min_age: getSetting('min_age', '18'),
     min_live_price_cents: getSetting('min_live_price_cents', '15000'),
+    withdrawal_hold_days: getSetting('withdrawal_hold_days', '30'),
   });
 });
 router.post('/settings', (req, res) => {
-  const { platform_fee_pct, min_withdraw_cents, min_age } = req.body || {};
+  const { platform_fee_pct, min_withdraw_cents, min_age, min_live_price_cents, withdrawal_hold_days } = req.body || {};
   if (platform_fee_pct !== undefined) {
     const f = Number(platform_fee_pct);
     if (!(f >= 0 && f <= 50)) return res.status(400).json({ error: 'Fee must be 0-50%' });
@@ -301,7 +285,8 @@ router.post('/settings', (req, res) => {
   }
   if (min_withdraw_cents !== undefined) setSetting('min_withdraw_cents', Math.max(1000, Math.round(Number(min_withdraw_cents) || 5000)));
   if (min_age !== undefined) setSetting('min_age', Math.max(18, Math.round(Number(min_age) || 18))); // never below 18
-  if (req.body.min_live_price_cents !== undefined) setSetting('min_live_price_cents', Math.max(0, Math.round(Number(req.body.min_live_price_cents) || 15000)));
+  if (min_live_price_cents !== undefined) setSetting('min_live_price_cents', Math.max(0, Math.round(Number(min_live_price_cents) || 15000)));
+  if (withdrawal_hold_days !== undefined) setSetting('withdrawal_hold_days', Math.max(0, Math.round(Number(withdrawal_hold_days) || 30)));
   audit(req.user.id, 'settings_update', 'settings', req.body);
   res.json({ ok: true });
 });

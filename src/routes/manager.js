@@ -16,9 +16,14 @@ router.get('/dashboard', (req, res) => {
   const withdrawals = q.all(`
     SELECT w.*, u.name AS model_name FROM withdrawals w JOIN users u ON u.id=w.model_id
     JOIN users m ON m.id=w.model_id
-    WHERE m.agency_id=? AND w.status='pending_manager' ORDER BY w.id DESC`, agency.id);
+    WHERE m.agency_id=? ORDER BY w.id DESC LIMIT 50`, agency.id);
   const notifications = q.all('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 30', req.user.id);
-  res.json({ agency, models, withdrawals, notifications });
+  const stats = {
+    earnings_cents: q.get('SELECT COALESCE(SUM(p.total_earned_cents),0) s FROM model_profiles p JOIN users u ON u.id=p.user_id WHERE u.agency_id=?', agency.id).s,
+    live_now: q.get('SELECT COUNT(*) c FROM users u JOIN model_profiles p ON p.user_id=u.id WHERE u.agency_id=? AND p.is_live=1', agency.id).c,
+    pending_models: q.get("SELECT COUNT(*) c FROM users u WHERE u.agency_id=? AND u.role='model' AND u.agency_approved=0 AND u.status!='rejected'", agency.id).c,
+  };
+  res.json({ agency, models, withdrawals, notifications, stats });
 });
 
 // Approve a model into the agency (admin still does final eligibility assessment)

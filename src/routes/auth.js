@@ -38,7 +38,8 @@ router.post('/register', (req, res) => {
     if (!email || !password || !name || !role) return res.status(400).json({ error: 'email, password, name and role are required' });
     if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Invalid email address' });
     if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    if (!['client', 'model', 'manager'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    // Agency manager accounts are NOT self-registered — the platform admin creates them (with the agency joining code) from the admin panel.
+    if (!['client', 'model'].includes(role)) return res.status(400).json({ error: 'Invalid role. Agency manager accounts are created by the platform administrator — ask your admin for your login and agency code.' });
     if (!dob) return res.status(400).json({ error: 'Date of birth is required (18+ only)' });
 
     const minAge = parseInt(getSetting('min_age', '18'), 10);
@@ -69,14 +70,6 @@ router.post('/register', (req, res) => {
       const ag = q.get('SELECT manager_id,name FROM agencies WHERE id=?', agencyId);
       if (ag) notify(ag.manager_id, 'model_pending', `New model "${name}" applied to your agency "${ag.name}". Review and approve.`);
     }
-    if (role === 'manager') {
-      const code = 'AG' + Math.random().toString(36).slice(2, 8).toUpperCase();
-      const agName = String(req.body.agencyName || `${name}'s Agency`).trim();
-      q.run('INSERT INTO agencies(code,name,manager_id) VALUES(?,?,?)', code, agName, id);
-      const admins = q.all("SELECT id FROM users WHERE role='admin'");
-      admins.forEach(a => notify(a.id, 'agency_new', `New agency "${agName}" (${code}) registered by ${name}.`));
-      return res.json({ ok: true, message: 'Agency registered. Share your agency code with your models.', agencyCode: code, needsVerification: true });
-    }
     audit(id, 'register', `user:${id}`, { role });
     res.json({ ok: true, message: 'Account created. Next step: verify your identity (ID + selfie) to activate.', needsVerification: true, userId: id });
   } catch (e) {
@@ -105,11 +98,13 @@ router.post('/verify', upload.fields([{ name: 'idDoc', maxCount: 1 }, { name: 's
     };
     const autoPass = Object.values(checks).every(Boolean);
 
+    // Hard deny when the ID details don't match the account details (or ID shows under 18)
+    const hardMismatch = !checks.dobMatchesAccount || !checks.dobOnIdAdult || !checks.accountDobAdult;
     q.run(`INSERT INTO verifications(user_id,id_type,id_number,dob_declared,id_file,selfie_file,status,auto_checks)
            VALUES(?,?,?,?,?,?,?,?)`,
       user.id, idType, String(idNumber).trim(), dobDeclared,
       req.files.idDoc[0].filename, req.files.selfie[0].filename,
-      autoPass ? 'approved' : 'pending', JSON.stringify(checks));
+      autoPass ? 'approved' : (hardMismatch ? 'rejected' : 'pending'), JSON.stringify(checks));
 
     if (autoPass) {
       q.run('UPDATE users SET verified=1 WHERE id=?', user.id);
@@ -122,9 +117,17 @@ router.post('/verify', upload.fields([{ name: 'idDoc', maxCount: 1 }, { name: 's
       const admins = q.all("SELECT id FROM users WHERE role='admin'");
       admins.forEach(a => notify(a.id, 'verification', `${user.name} (${user.role}) auto-verified: ID ${idType}, DOB ${dobDeclared}.`));
       audit(user.id, 'verification_auto_approved', `user:${user.id}`, checks);
-      return res.json({ ok: true, verified: true, message: 'Identity verified automatically. You are 18+ confirmed.' });
+      // Instant login: return a session token so the user goes straight into their dashboard
+      const fresh = q.get('SELECT * FROM users WHERE id=?', user.id);
+      const { pass_hash, ...safe } = fresh;
+      return res.json({ ok: true, verified: true, message: 'Identity verified — welcome! Entering your dashboard…', token: sign(fresh), user: safe });
     }
 
+    if (hardMismatch) {
+      audit(user.id, 'verification_auto_rejected', `user:${user.id}`, checks);
+      return res.status(403).json({ ok: false, verified: false, denied: true,
+        error: 'Verification denied: the details on your ID do not match your account details, or the ID does not confirm you are 18+. Please re-submit with matching, valid details.', checks });
+    }
     const admins = q.all("SELECT id FROM users WHERE role='admin'");
     admins.forEach(a => notify(a.id, 'verification_review', `${user.name} (${user.role}) verification needs manual review.`));
     audit(user.id, 'verification_manual_review', `user:${user.id}`, checks);
@@ -162,6 +165,20 @@ router.get('/me', requireAuth, (req, res) => {
       ? q.get('SELECT code,name FROM agencies WHERE manager_id=?', req.user.id)
       : {};
   res.json({ user: { ...req.user, profile: extra || {} } });
+});
+
+// ---------- GET HELP: users type their problem, it lands in the admin panel ----------
+router.post('/support', requireAuth, (req, res) => {
+  const msg = String(req.body.message || '').trim();
+  if (!msg) return res.status(400).json({ error: 'Please describe your problem first.' });
+  const id = q.run('INSERT INTO support_messages(user_id,message) VALUES(?,?)', req.user.id, msg.slice(0, 1000)).lastInsertRowid;
+  const admins = q.all("SELECT id FROM users WHERE role='admin'");
+  admins.forEach(a => notify(a.id, 'support', `Help request from ${req.user.name} (${req.user.role}): ${msg.slice(0, 80)}`));
+  res.json({ ok: true, ticket_id: id });
+});
+
+router.get('/support', requireAuth, (req, res) => {
+  res.json({ tickets: q.all('SELECT id,message,reply,status,created_at,resolved_at FROM support_messages WHERE user_id=? ORDER BY id DESC LIMIT 50', req.user.id) });
 });
 
 module.exports = router;
