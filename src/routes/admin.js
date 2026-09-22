@@ -91,6 +91,26 @@ router.post('/users/:id/wallet-model', (req, res) => {
   res.json({ ok: true, balance_cents: q.get('SELECT wallet_cents AS w FROM users WHERE id=?', u.id).w });
 });
 
+// Deduct money from a MODEL's wallet (penalty / chargeback / correction).
+// Mirrors the payment route above: wallet + agency earnings totals update instantly,
+// and the balance can never be driven below $0.
+router.post('/users/:id/wallet-model-deduct', (req, res) => {
+  const cents = Math.round(Number(req.body.amount_cents));
+  if (!Number.isFinite(cents) || cents <= 0 || cents > 10000000) return res.status(400).json({ error: 'Amount must be positive (max $100,000 per deduction)' });
+  const u = q.get("SELECT * FROM users WHERE id=? AND role='model'", req.params.id);
+  if (!u) return res.status(404).json({ error: 'Model not found' });
+  const applied = Math.min(cents, u.wallet_cents); // clamp — a wallet can never go negative
+  if (applied <= 0) return res.status(400).json({ error: "This model's wallet is already empty" });
+  q.run('UPDATE users SET wallet_cents = wallet_cents - ? WHERE id=?', applied, u.id);
+  q.run('UPDATE model_profiles SET total_earned_cents = MAX(total_earned_cents - ?, 0) WHERE user_id=?', applied, u.id);
+  q.run('INSERT INTO transactions(user_id,kind,amount_cents,ref) VALUES(?,?,?,?)', u.id, 'adjustment', -applied, 'admin_deduction');
+  notify(u.id, 'wallet', `$${(applied / 100).toFixed(2)} was deducted from your wallet by the platform admin.`);
+  const ag = q.get('SELECT manager_id FROM agencies WHERE id=?', u.agency_id);
+  if (ag) notify(ag.manager_id, 'wallet', `Admin deducted $${(applied / 100).toFixed(2)} from ${u.name}'s wallet — reflected in your agency earnings.`);
+  audit(req.user.id, 'admin_model_deduction', `user:${u.id}`, { cents: applied });
+  res.json({ ok: true, deducted_cents: applied, balance_cents: q.get('SELECT wallet_cents AS w FROM users WHERE id=?', u.id).w });
+});
+
 // Admin directive to a model ("tell the model what to do")
 router.post('/models/:id/directive', (req, res) => {
   const msg = String(req.body.message || '').trim();
@@ -238,6 +258,22 @@ router.post('/lives/:id/end', (req, res) => {
   notify(l.model_id, 'live_ended', 'Your live stream was ended by the administrator.');
   audit(req.user.id, 'admin_end_live', `live:${l.id}`);
   res.json({ ok: true });
+});
+
+// Grant a client FREE access to a live (no charge) — they join exactly like a paying viewer.
+router.post('/lives/:id/grant-access', (req, res) => {
+  const l = q.get("SELECT * FROM lives WHERE id=? AND status IN ('live','scheduled')", req.params.id);
+  if (!l) return res.status(404).json({ error: 'Live not found (must be live or scheduled)' });
+  const email = String((req.body || {}).email || '').toLowerCase().trim();
+  const uid = Number((req.body || {}).user_id);
+  let u = null;
+  if (email) u = q.get("SELECT * FROM users WHERE email=? AND role='client'", email);
+  else if (Number.isFinite(uid) && uid > 0) u = q.get("SELECT * FROM users WHERE id=? AND role='client'", uid);
+  if (!u) return res.status(404).json({ error: "Client not found — enter the client's account email" });
+  q.run('INSERT OR IGNORE INTO live_access(live_id,user_id,paid_cents) VALUES(?,?,0)', l.id, u.id);
+  notify(u.id, 'live_access', `You were granted free access to the live "${l.title}" — enjoy the show!`, `/watch.html?live=${l.id}`);
+  audit(req.user.id, 'admin_grant_live_access', `live:${l.id}`, { client_id: u.id, email: u.email });
+  res.json({ ok: true, client: u.name });
 });
 
 // ---------- payouts ----------

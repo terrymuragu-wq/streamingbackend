@@ -208,7 +208,7 @@ const views = {
       <td>
         ${u.status==='suspended'?`<button class="ok" onclick="setStatus(${u.id},'active')">Unsuspend</button>`:`<button class="bad" onclick="setStatus(${u.id},'suspended')">Suspend</button>`}
         ${u.role==='client'?`<button class="warn" onclick="restrict(${u.id})">${u.restricted?'Unrestrict':'Restrict'}</button> <button class="ok" onclick="addMoney(${u.id})">💵 Add Money</button>`:''}
-        ${u.role==='model'?`<button class="ok" onclick="payModel(${u.id})">💵 Pay Model</button> <button class="ghost" onclick="directive(${u.id})">Directive</button>`:''}
+        ${u.role==='model'?`<button class="ok" onclick="payModel(${u.id})">💵 Pay Model</button> <button class=\"warn\" onclick=\"deductModel(${u.id})\">💸 Deduct</button> <button class="ghost" onclick="directive(${u.id})">Directive</button>`:''}
       </td>
     </tr>`).join('')}
     </tbody></table>`;
@@ -232,7 +232,7 @@ const views = {
       <td>${esc(l.model_name)}</td><td>${esc(l.title)}</td>
       <td>${l.status==='live'?badge('🔴 LIVE','b-bad'):badge(l.status,'b-mut')}</td>
       <td>${money(l.price_cents)}</td><td>${l.peak_viewers}</td><td>${esc(l.started_at||'—')}</td>
-      <td>${l.status==='live'?`<button class="bad" onclick="endLive(${l.id})">Force End</button>`:''}</td>
+      <td>${l.status==='live'?`<button class="bad" onclick="endLive(${l.id})">Force End</button>`:''} ${(l.status==='live'||l.status==='scheduled')?`<button class=\"ok\" onclick=\"grantAccess(${l.id})\">🎟 Free Access</button>`:''}</td>
     </tr>`).join('')||`<tr><td colspan="7" style="text-align:center;color:var(--mut)">No lives yet.</td></tr>`}
     </tbody></table>`;
   },
@@ -371,6 +371,21 @@ async function payModel(id){
   if (!(amt > 0)) return;
   try { const j = await api('/api/admin/users/'+id+'/wallet-model',{method:'POST',body:JSON.stringify({amount_cents:Math.round(amt*100)})});
     toast('✅ Model paid — new balance '+money(j.balance_cents)); show('users'); }
+  catch(e){ toast(e.message); }
+}
+async function deductModel(id){
+  const amt = Number(prompt("Amount in USD to DEDUCT from this model's wallet (penalty / correction):"));
+  if (!(amt > 0)) return;
+  if (!confirm("Deduct $"+amt.toFixed(2)+" from this model's wallet? This cannot be undone.")) return;
+  try { const j = await api('/api/admin/users/'+id+'/wallet-model-deduct',{method:'POST',body:JSON.stringify({amount_cents:Math.round(amt*100)})});
+    toast('✅ Deducted '+money(j.deducted_cents)+' — new balance '+money(j.balance_cents)); show('users'); }
+  catch(e){ toast(e.message); }
+}
+async function grantAccess(liveId){
+  const email = prompt("Client's account email to grant FREE access to this live (they will not be charged):");
+  if (!email) return;
+  try { const j = await api('/api/admin/lives/'+liveId+'/grant-access',{method:'POST',body:JSON.stringify({email:email.trim()})});
+    toast('✅ Free access granted to '+j.client); }
   catch(e){ toast(e.message); }
 }
 async function createAgency(){

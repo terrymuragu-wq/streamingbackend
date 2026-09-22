@@ -113,6 +113,13 @@ io.on('connection', (socket) => {
     socket.data.is_broadcaster = isModel;
     if (!viewers.has(live_id)) viewers.set(live_id, new Set());
     viewers.get(live_id).add(socket.id);
+    // Broadcaster (re)joined — tell them who is already watching so every current
+    // viewer receives a fresh WebRTC offer (keeps the stream alive for viewers even
+    // when the broadcaster refreshes the page or briefly drops the connection)
+    if (isModel) {
+      const already = [...viewers.get(live_id)].filter(sid => sid !== socket.id);
+      if (already.length) socket.emit('existing_viewers', { viewers: already });
+    }
     const count = viewers.get(live_id).size - 1; // minus broadcaster
     q.run('UPDATE lives SET peak_viewers = MAX(peak_viewers, ?) WHERE id=?', Math.max(0, count), live_id);
     io.to(`live:${live_id}`).emit('viewer_count', { live_id, count: Math.max(0, count) });

@@ -64,6 +64,20 @@ router.post('/subscribe/:modelId', (req, res) => {
   res.json({ ok: true, paid_cents: m.sub_price_cents });
 });
 
+// Check-only: does this client already have access to the live (paid earlier,
+// granted free by the admin, or subscribed for a subscribers-only stream)?
+// NEVER charges — used by the watch page to skip the ticket screen on re-entry/refresh.
+router.get('/lives/:id/access', (req, res) => {
+  const live = q.get("SELECT * FROM lives WHERE id=? AND status IN ('live','scheduled')", req.params.id);
+  if (!live) return res.status(404).json({ error: 'Live not found' });
+  if (q.get('SELECT id FROM live_access WHERE live_id=? AND user_id=?', live.id, req.user.id)) return res.json({ access: true });
+  if (live.price_cents === 0) {
+    const sub = q.get("SELECT id FROM subscriptions WHERE model_id=? AND client_id=? AND status='active'", live.model_id, req.user.id);
+    if (sub) return res.json({ access: true, via: 'subscription' });
+  }
+  res.json({ access: false });
+});
+
 // Pay to access a specific live
 router.post('/lives/:id/access', (req, res) => {
   if (blocked(req, res)) return;
